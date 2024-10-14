@@ -1,6 +1,5 @@
 import asyncio
 from aiogram import Bot, Dispatcher, types, F
-from aiogram.filters import CommandStart
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.fsm.storage.memory import MemoryStorage
@@ -20,8 +19,9 @@ logging.basicConfig(
     ]
 )
 
-# Определение состояний
-class Form(StatesGroup):
+
+# Определение состояний для клиентов и дезинсекторов
+class ClientForm(StatesGroup):
     name = State()
     object = State()
     insect_quantity = State()
@@ -29,10 +29,18 @@ class Form(StatesGroup):
     phone = State()
     address = State()
 
+
+class DisinsectorForm(StatesGroup):
+    token = State()  # Ввод токена дезинсектора
+    name = State()  # Имя дезинсектора после авторизации по токену
+
+
 # Функция инициализации базы данных
 def init_db():
     conn = sqlite3.connect('disinsect_data.db')
     cur = conn.cursor()
+
+    # Создание таблицы для клиентов
     cur.execute('''
     CREATE TABLE IF NOT EXISTS users (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -44,31 +52,72 @@ def init_db():
         address TEXT NOT NULL
     )
     ''')
+
+    # Создание таблицы для дезинсекторов
+    cur.execute('''
+    CREATE TABLE IF NOT EXISTS disinsectors (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        telegram_id TEXT NOT NULL UNIQUE,
+        name TEXT NOT NULL,
+        token TEXT NOT NULL UNIQUE,
+        phone TEXT
+    )
+    ''')
+
     conn.commit()
     conn.close()
 
+
 init_db()
+
+
+# Функция для показа данных дезинсектора
+async def show_disinsector_data(message: types.Message, disinsector):
+    conn = sqlite3.connect('disinsect_data.db')
+    cur = conn.cursor()
+
+    # Выводим приветствие и информацию о дезинсекторе
+    await message.answer(f"Здравствуйте, {disinsector[1]}! Вот информация о ваших клиентах:")
+
+    # Получение количества клиентов и заявок
+    cur.execute("SELECT COUNT(*) FROM users")
+    client_count = cur.fetchone()[0]
+
+    await message.answer(f"У вас {client_count} клиентов. Вы можете получить список клиентов и информацию по заявкам.")
+
+    # Получение и отправка списка клиентов
+    cur.execute("SELECT name, phone, address FROM users")
+    clients = cur.fetchall()
+
+    if clients:
+        clients_info = "\n".join([f"{client[0]}, Телефон: {client[1]}, Адрес: {client[2]}" for client in clients])
+        await message.answer(f"Список клиентов:\n{clients_info}")
+    else:
+        await message.answer("На данный момент у вас нет клиентов.")
+
+    conn.close()
+
 
 async def start_bot(token):
     bot = Bot(token=token)
     storage = MemoryStorage()
     dp = Dispatcher(storage=storage)
 
-    # Обработчик команды /start
-    @dp.message(CommandStart())
-    async def start_command(message: types.Message, state: FSMContext):
-        await message.answer("Добрый день! Как к вам можно обращаться?")
-        await state.set_state(Form.name)
+    # Обработчик команды /start для клиентов
+    @dp.message(commands=["start"])
+    async def start_client_command(message: types.Message, state: FSMContext):
+        await message.answer("Добро пожаловать! Как к вам можно обращаться?")
+        await state.set_state(ClientForm.name)
 
-    # Обработчик имени
-    @dp.message(Form.name)
+    # Обработчик ввода имени клиента
+    @dp.message(ClientForm.name)
     async def process_name(message: types.Message, state: FSMContext):
         await state.update_data(name=message.text)
         await message.answer(
             f"{message.text}, ответьте, пожалуйста, на несколько вопросов, чтобы мы могли просчитать стоимость дезинсекции.",
             reply_markup=kb.inl_kb_greetings
         )
-        await state.set_state(Form.object)
+        await state.set_state(ClientForm.object)
 
     # Обработчик кнопки начала
     @dp.callback_query(F.data == 'start')
@@ -78,7 +127,7 @@ async def start_bot(token):
             "Расскажите, пожалуйста, подробнее об объекте. У вас:",
             reply_markup=kb.inl_kb_object
         )
-        await state.set_state(Form.insect_quantity)
+        await state.set_state(ClientForm.insect_quantity)
 
     # Обработчик выбора объекта
     @dp.callback_query(F.data.startswith('object_'))
@@ -90,9 +139,9 @@ async def start_bot(token):
             "Сколько насекомых вы обнаружили?",
             reply_markup=kb.inl_kb_insect_quantity
         )
-        await state.set_state(Form.insect_quantity)
+        await state.set_state(ClientForm.insect_quantity)
 
-    # Обработчик количества насекомых
+    # Обработчик выбора количества насекомых
     @dp.callback_query(F.data.startswith('quantity_'))
     async def process_insect_quantity(callback: types.CallbackQuery, state: FSMContext):
         quantity_selected = callback.data.split('_')[1]
@@ -102,9 +151,9 @@ async def start_bot(token):
             "Есть ли у вас опыт дезинсекции?",
             reply_markup=kb.inl_kb_experience
         )
-        await state.set_state(Form.disinsect_experience)
+        await state.set_state(ClientForm.disinsect_experience)
 
-    # Обработчик опыта дезинсекции
+    # Обработчик выбора опыта дезинсекции
     @dp.callback_query(F.data.startswith('experience_'))
     async def process_disinsect_experience(callback: types.CallbackQuery, state: FSMContext):
         experience_selected = callback.data.split('_')[1]
@@ -114,19 +163,19 @@ async def start_bot(token):
             "Пожалуйста, отправьте ваш номер телефона:",
             reply_markup=kb.kb_contact
         )
-        await state.set_state(Form.phone)
+        await state.set_state(ClientForm.phone)
 
-    # Обработчик номера телефона (отправка контакта)
-    @dp.message(Form.phone, F.content_type == types.ContentType.CONTACT)
+    # Обработчик номера телефона
+    @dp.message(ClientForm.phone, F.content_type == types.ContentType.CONTACT)
     async def process_phone_contact(message: types.Message, state: FSMContext):
         if message.contact:
             phone = re.sub(r'\D', '', message.contact.phone_number)
             await state.update_data(phone=phone)
             await message.answer("Пожалуйста, введите ваш домашний адрес:")
-            await state.set_state(Form.address)
+            await state.set_state(ClientForm.address)
 
-    # Обработчик номера телефона (ввод вручную)
-    @dp.message(Form.phone, F.content_type == types.ContentType.TEXT)
+    # Обработчик ввода телефона вручную
+    @dp.message(ClientForm.phone, F.content_type == types.ContentType.TEXT)
     async def process_phone_text(message: types.Message, state: FSMContext):
         phone = re.sub(r'\D', '', message.text)
         if not re.fullmatch(r'\d{10,15}', phone):
@@ -134,10 +183,10 @@ async def start_bot(token):
             return
         await state.update_data(phone=phone)
         await message.answer("Пожалуйста, введите ваш домашний адрес:")
-        await state.set_state(Form.address)
+        await state.set_state(ClientForm.address)
 
     # Обработчик домашнего адреса
-    @dp.message(Form.address)
+    @dp.message(ClientForm.address)
     async def process_address(message: types.Message, state: FSMContext):
         address = message.text.strip()
         if len(address) < 5:
@@ -148,7 +197,7 @@ async def start_bot(token):
         user_data = await state.get_data()
         logging.info(f"Сохранение данных: {user_data}")
 
-        # Сохранение данных в базу данных
+        # Сохранение данных клиента в базу данных
         try:
             conn = sqlite3.connect('disinsect_data.db')
             cur = conn.cursor()
@@ -165,28 +214,55 @@ async def start_bot(token):
             ))
             conn.commit()
             conn.close()
-            logging.info("Данные успешно сохранены в базу данных.")
+            logging.info("Данные клиента успешно сохранены в базу данных.")
         except Exception as e:
             logging.error(f"Ошибка при сохранении данных: {e}")
             await message.answer("Произошла ошибка при сохранении данных. Пожалуйста, попробуйте позже.")
             await state.clear()
             return
 
-        await message.answer(f"Спасибо, {user_data.get('name')}! Ваши данные сохранены.\nТелефон: {user_data.get('phone')}\nАдрес: {user_data.get('address')}")
+        await message.answer(f"Спасибо, {user_data.get('name')}! Ваши данные сохранены.")
         await state.clear()
 
+        # Обработчик команды /login для дезинсекторов
+        @dp.message(commands="login")
+        async def login_command(message: types.Message, state: FSMContext):
+            await message.answer("Пожалуйста, введите ваш персональный токен для авторизации:")
+            await state.set_state(DisinsectorForm.token)
+
+        # Обработчик ввода токена дезинсектора
+        @dp.message(DisinsectorForm.token)
+        async def process_token(message: types.Message, state: FSMContext):
+            token_input = message.text.strip()
+
+            # Проверяем наличие токена в базе данных
+            conn = sqlite3.connect('disinsect_data.db')
+            cur = conn.cursor()
+            cur.execute("SELECT * FROM disinsectors WHERE token = ?", (token_input,))
+            disinsector = cur.fetchone()
+            conn.close()
+
+            if disinsector:
+                await message.answer(f"Добро пожаловать, {disinsector[1]}! Вы успешно авторизованы.")
+                await state.clear()
+                # Показать меню или данные дезинсектора
+                await show_disinsector_data(message, disinsector)
+            else:
+                await message.answer("Токен неверен, попробуйте снова.")
+                await state.clear()
+
+        async def main():
+            try:
+                await dp.start_polling(bot)
+            finally:
+                await bot.session.close()
+
+    # Основная функция для запуска всех ботов
     async def main():
-        try:
-            await dp.start_polling(bot)
-        finally:
-            await bot.session.close()
+        tasks = [start_bot(bot_token) for bot_token in TOKENS.values()]
+        await asyncio.gather(*tasks)
 
-    await main()
+    if __name__ == '__main__':
+        asyncio.run(main())
 
-# Основная функция для запуска всех ботов
-async def main():
-    tasks = [start_bot(token) for token in TOKENS.values()]
-    await asyncio.gather(*tasks)
 
-if __name__ == '__main__':
-    asyncio.run(main())

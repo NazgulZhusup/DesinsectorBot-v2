@@ -166,4 +166,4 @@ def receive_order():
 
 
 if __name__ == '__main__':
-    app.run(port=5000)  # Запуск API на порту 5000
+    app.run(port=5000)
