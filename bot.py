@@ -1,11 +1,14 @@
 import asyncio
 from aiogram import Bot, Dispatcher, types, F
+from aiogram.filters import CommandStart
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.fsm.storage.memory import MemoryStorage
 import sqlite3
+import requests
 import logging
 import re
+import uuid
 import keyboards as kb
 from config import TOKENS
 
@@ -19,8 +22,7 @@ logging.basicConfig(
     ]
 )
 
-
-# Определение состояний для клиентов и дезинсекторов
+# Определение состояний для клиентов
 class ClientForm(StatesGroup):
     name = State()
     object = State()
@@ -29,105 +31,240 @@ class ClientForm(StatesGroup):
     phone = State()
     address = State()
 
-
+# Определение состояний для дезинсекторов
 class DisinsectorForm(StatesGroup):
-    token = State()  # Ввод токена дезинсектора
-    name = State()  # Имя дезинсектора после авторизации по токену
+    order_status = State()
 
+# Функция для получения дезинсектора по токену
+def get_disinsector_by_token(token):
+    conn = sqlite3.connect('disinsect_data.db')
+    cur = conn.cursor()
+    cur.execute('SELECT id, name FROM disinsectors WHERE token = ?', (token,))
+    disinsector = cur.fetchone()
+    conn.close()
+    return disinsector
 
-# Функция инициализации базы данных
+# Функция инициализации базы данных (общая)
 def init_db():
     conn = sqlite3.connect('disinsect_data.db')
     cur = conn.cursor()
-
-    # Создание таблицы для клиентов
     cur.execute('''
-    CREATE TABLE IF NOT EXISTS users (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        name TEXT NOT NULL,
-        object TEXT NOT NULL,
-        insect_quantity TEXT NOT NULL,
-        disinsect_experience TEXT NOT NULL,
-        phone TEXT NOT NULL,
-        address TEXT NOT NULL
-    )
-    ''')
+        CREATE TABLE IF NOT EXISTS users (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT NOT NULL,
+            object TEXT NOT NULL,
+            insect_quantity TEXT NOT NULL,
+            disinsect_experience TEXT NOT NULL,
+            phone TEXT NOT NULL,
+            address TEXT NOT NULL
+        )
+        ''')
 
-    # Создание таблицы для дезинсекторов
+    # Создание таблицы orders
     cur.execute('''
-    CREATE TABLE IF NOT EXISTS disinsectors (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        telegram_id TEXT NOT NULL UNIQUE,
-        name TEXT NOT NULL,
-        token TEXT NOT NULL UNIQUE,
-        phone TEXT
-    )
-    ''')
+            CREATE TABLE IF NOT EXISTS orders (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                client_id INTEGER NOT NULL, 
+                disinsector_id INTEGER, 
+                order_id TEXT NOT NULL,
+                order_status TEXT DEFAULT 'Новая',
+                order_date TEXT,
+                estimated_price INTEGER,
+                final_price INTEGER,
+                poison_type TEXT,
+                insect_type TEXT,
+                insect_quantity TEXT,
+                client_contact TEXT,
+                client_address TEXT,
+                client_property_type TEXT,
+                client_area INTEGER,
+                FOREIGN KEY (client_id) REFERENCES users(id)  -- Внешний ключ
+            )
+            ''')
+
+    # Создание таблицы clients
+    cur.execute('''
+            CREATE TABLE IF NOT EXISTS clients (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                name TEXT NOT NULL,
+                email TEXT NOT NULL UNIQUE,
+                password TEXT NOT NULL
+            )
+            ''')
+
+    # Создание таблицы admins
+    cur.execute('''
+            CREATE TABLE IF NOT EXISTS admins (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                name TEXT NOT NULL,
+                email TEXT NOT NULL UNIQUE,
+                password TEXT NOT NULL
+            )
+            ''')
+
+    # Создание таблицы disinsectors
+    cur.execute('''
+            CREATE TABLE IF NOT EXISTS disinsectors (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                name TEXT NOT NULL,
+                email TEXT NOT NULL UNIQUE,
+                password TEXT NOT NULL,
+                token TEXT NOT NULL UNIQUE
+            )
+            ''')
+    conn.commit()
+    conn.close()
+
+init_db()
+
+# Функция для получения дезинсектора по стратегии Round-Robin
+def get_next_disinsector():
+    conn = sqlite3.connect('disinsect_data.db')
+    cur = conn.cursor()
+
+    # Получаем всех дезинсекторов
+    cur.execute("SELECT id FROM disinsectors ORDER BY id ASC")
+    disinsectors = cur.fetchall()
+
+    if not disinsectors:
+        print("Ошибка: нет доступных дезинсекторов.")
+        conn.close()
+        return None
+
+    # Получаем количество заявок у каждого дезинсектора
+    cur.execute("SELECT disinsector_id, COUNT(*) FROM orders WHERE disinsector_id IS NOT NULL GROUP BY disinsector_id")
+    disinsector_counts = cur.fetchall()
+
+    # Преобразуем результат в словарь: {disinsector_id: количество заявок}
+    disinsector_dict = {row[0]: row[1] for row in disinsector_counts}
+
+    # Ищем дезинсектора с наименьшим количеством заявок
+    min_count = float('inf')
+    selected_disinsector = None
+
+    for disinsector in disinsectors:
+        disinsector_id = disinsector[0]
+        count = disinsector_dict.get(disinsector_id, 0)  # Если у дезинсектора нет заявок, возвращаем 0
+        if count < min_count:
+            min_count = count
+            selected_disinsector = disinsector_id
+
+    conn.close()
+
+    if selected_disinsector is None:
+        print("Ошибка: не удалось выбрать дезинсектора.")
+
+    return selected_disinsector
+
+
+def get_disinsector_token(disinsector_id):
+    conn = sqlite3.connect('disinsect_data.db')
+    cur = conn.cursor()
+    cur.execute("SELECT token FROM disinsectors WHERE id = ?", (disinsector_id,))
+    result = cur.fetchone()
+    conn.close()
+    return result[0] if result else None
+
+def get_all_disinsector_tokens():
+    conn = sqlite3.connect('disinsect_data.db')
+    cur = conn.cursor()
+    cur.execute("SELECT token FROM disinsectors")
+    tokens = [row[0] for row in cur.fetchall()]
+    conn.close()
+    return tokens
+
+
+# Функция для отправки уведомления дезинсектору о новой заявке
+async def send_notification_to_disinsector_and_start_questions(disinsector_id, user_data, state):
+    # Получаем токен дезинсектора
+    token = get_disinsector_token(disinsector_id)
+    if token:
+        bot = Bot(token=token)
+        # Отправляем уведомление
+        message_text = f"Новая заявка: {user_data['name']}, объект: {user_data['object']}. Какой химикат будет использоваться?"
+        await bot.send_message(chat_id=user_data['chat_id'], text=message_text)
+        # Запускаем процесс ввода химиката
+        await state.set_state(DisinsectorForm.poison_type)
+    else:
+        print(f"Ошибка: Токен не найден для дезинсектора с ID {disinsector_id}")
+
+
+
+# Функция для создания новой заявки
+async def create_order(user_data, disinsector_id, state):
+    conn = sqlite3.connect('disinsect_data.db')
+    cur = conn.cursor()
+
+    disinsector_id = get_next_disinsector()
+    order_id = str(uuid.uuid4())[:8]  # Уникальный идентификатор заявки, обрезанный до 8 символов
+
+    cur.execute('''
+        INSERT INTO users (name, object, insect_quantity, disinsect_experience, phone, address)
+        VALUES (?, ?, ?, ?, ?, ?)
+    ''', (
+        user_data['name'],
+        user_data['object'],
+        user_data['insect_quantity'],
+        user_data['disinsect_experience'],
+        user_data['phone'],
+        user_data['address']
+    ))
+
+    user_id = cur.lastrowid
+
+    order_id = user_data.get('order_id', f"ORD{user_id}")
+
+    # Вставка данных в таблицу orders
+    cur.execute('''
+        INSERT INTO orders (client_id, order_id, order_status, order_date, estimated_price, final_price, disinsector_id)
+        VALUES (?, ?, ?, date('now'), ?, ?, ?)
+    ''', [
+        user_id,  # client_id ссылается на ID из таблицы users
+        order_id,
+        'Новая',  # Статус заявки по умолчанию
+        1000,  # Пример сметной стоимости
+        1200,  # Пример окончательной стоимости
+        disinsector_id  # Назначенный дезинсектор
+    ])
 
     conn.commit()
     conn.close()
 
-
-init_db()
-
-
-# Функция для показа данных дезинсектора
-async def show_disinsector_data(message: types.Message, disinsector):
-    conn = sqlite3.connect('disinsect_data.db')
-    cur = conn.cursor()
-
-    # Выводим приветствие и информацию о дезинсекторе
-    await message.answer(f"Здравствуйте, {disinsector[1]}! Вот информация о ваших клиентах:")
-
-    # Получение количества клиентов и заявок
-    cur.execute("SELECT COUNT(*) FROM users")
-    client_count = cur.fetchone()[0]
-
-    await message.answer(f"У вас {client_count} клиентов. Вы можете получить список клиентов и информацию по заявкам.")
-
-    # Получение и отправка списка клиентов
-    cur.execute("SELECT name, phone, address FROM users")
-    clients = cur.fetchall()
-
-    if clients:
-        clients_info = "\n".join([f"{client[0]}, Телефон: {client[1]}, Адрес: {client[2]}" for client in clients])
-        await message.answer(f"Список клиентов:\n{clients_info}")
-    else:
-        await message.answer("На данный момент у вас нет клиентов.")
-
-    conn.close()
+    await send_notification_to_disinsector_and_start_questions(disinsector_id, user_data, state)
 
 
-async def start_bot(token):
+
+
+# Запуск бота для клиентов
+async def start_client_bot(token):
     bot = Bot(token=token)
     storage = MemoryStorage()
     dp = Dispatcher(storage=storage)
 
-    # Обработчик команды /start для клиентов
-    @dp.message(commands=["start"])
-    async def start_client_command(message: types.Message, state: FSMContext):
-        await message.answer("Добро пожаловать! Как к вам можно обращаться?")
+    @dp.message(CommandStart())
+    async def start_command(message: types.Message, state: FSMContext):
+        await message.answer("Добрый день! Как к вам можно обращаться?")
         await state.set_state(ClientForm.name)
 
-    # Обработчик ввода имени клиента
+    # Обработчик имени
     @dp.message(ClientForm.name)
     async def process_name(message: types.Message, state: FSMContext):
         await state.update_data(name=message.text)
         await message.answer(
             f"{message.text}, ответьте, пожалуйста, на несколько вопросов, чтобы мы могли просчитать стоимость дезинсекции.",
-            reply_markup=kb.inl_kb_greetings
+            reply_markup=kb.inl_kb_greetings  # Клавиатура с кнопкой "Начать"
         )
         await state.set_state(ClientForm.object)
 
-    # Обработчик кнопки начала
+    # Обработчик кнопки "Начать"
     @dp.callback_query(F.data == 'start')
     async def process_start(callback: types.CallbackQuery, state: FSMContext):
         await callback.answer()
         await callback.message.answer(
             "Расскажите, пожалуйста, подробнее об объекте. У вас:",
-            reply_markup=kb.inl_kb_object
+            reply_markup=kb.inl_kb_object  # Клавиатура для выбора объекта
         )
-        await state.set_state(ClientForm.insect_quantity)
+        await state.set_state(ClientForm.object)
 
     # Обработчик выбора объекта
     @dp.callback_query(F.data.startswith('object_'))
@@ -137,11 +274,11 @@ async def start_bot(token):
         await callback.answer()
         await callback.message.answer(
             "Сколько насекомых вы обнаружили?",
-            reply_markup=kb.inl_kb_insect_quantity
+            reply_markup=kb.inl_kb_insect_quantity  # Клавиатура для выбора количества насекомых
         )
         await state.set_state(ClientForm.insect_quantity)
 
-    # Обработчик выбора количества насекомых
+    # Обработчик количества насекомых
     @dp.callback_query(F.data.startswith('quantity_'))
     async def process_insect_quantity(callback: types.CallbackQuery, state: FSMContext):
         quantity_selected = callback.data.split('_')[1]
@@ -149,11 +286,11 @@ async def start_bot(token):
         await callback.answer()
         await callback.message.answer(
             "Есть ли у вас опыт дезинсекции?",
-            reply_markup=kb.inl_kb_experience
+            reply_markup=kb.inl_kb_experience  # Клавиатура для выбора опыта дезинсекции
         )
         await state.set_state(ClientForm.disinsect_experience)
 
-    # Обработчик выбора опыта дезинсекции
+    # Обработчик опыта дезинсекции
     @dp.callback_query(F.data.startswith('experience_'))
     async def process_disinsect_experience(callback: types.CallbackQuery, state: FSMContext):
         experience_selected = callback.data.split('_')[1]
@@ -161,20 +298,19 @@ async def start_bot(token):
         await callback.answer()
         await callback.message.answer(
             "Пожалуйста, отправьте ваш номер телефона:",
-            reply_markup=kb.kb_contact
+            reply_markup=kb.kb_contact  # Кнопка для отправки контакта
         )
         await state.set_state(ClientForm.phone)
 
-    # Обработчик номера телефона
+    # Обработчик номера телефона (отправка контакта)
     @dp.message(ClientForm.phone, F.content_type == types.ContentType.CONTACT)
     async def process_phone_contact(message: types.Message, state: FSMContext):
-        if message.contact:
-            phone = re.sub(r'\D', '', message.contact.phone_number)
-            await state.update_data(phone=phone)
-            await message.answer("Пожалуйста, введите ваш домашний адрес:")
-            await state.set_state(ClientForm.address)
+        phone = re.sub(r'\D', '', message.contact.phone_number)
+        await state.update_data(phone=phone)
+        await message.answer("Пожалуйста, введите ваш домашний адрес:")
+        await state.set_state(ClientForm.address)
 
-    # Обработчик ввода телефона вручную
+    # Обработчик номера телефона (ввод вручную)
     @dp.message(ClientForm.phone, F.content_type == types.ContentType.TEXT)
     async def process_phone_text(message: types.Message, state: FSMContext):
         phone = re.sub(r'\D', '', message.text)
@@ -195,74 +331,107 @@ async def start_bot(token):
         await state.update_data(address=address)
 
         user_data = await state.get_data()
-        logging.info(f"Сохранение данных: {user_data}")
 
-        # Сохранение данных клиента в базу данных
-        try:
-            conn = sqlite3.connect('disinsect_data.db')
-            cur = conn.cursor()
-            cur.execute('''
-            INSERT INTO users (name, object, insect_quantity, disinsect_experience, phone, address)
-            VALUES (?, ?, ?, ?, ?, ?)
-            ''', (
-                user_data.get('name'),
-                user_data.get('object'),
-                user_data.get('insect_quantity'),
-                user_data.get('disinsect_experience'),
-                user_data.get('phone'),
-                user_data.get('address')
-            ))
-            conn.commit()
-            conn.close()
-            logging.info("Данные клиента успешно сохранены в базу данных.")
-        except Exception as e:
-            logging.error(f"Ошибка при сохранении данных: {e}")
-            await message.answer("Произошла ошибка при сохранении данных. Пожалуйста, попробуйте позже.")
-            await state.clear()
-            return
+        disinsector_id = user_data.get('disinsector_id')
+        create_order(user_data, disinsector_id, state)
 
-        await message.answer(f"Спасибо, {user_data.get('name')}! Ваши данные сохранены.")
+        # Сохранение данных и создание заявки
+        create_order(user_data, disinsector_id, state)
+
+        await message.answer(
+            f"Спасибо, {user_data.get('name')}! Ваши данные сохранены.\nТелефон: {user_data.get('phone')}\nАдрес: {user_data.get('address')}")
         await state.clear()
 
-        # Обработчик команды /login для дезинсекторов
-        @dp.message(commands="login")
-        async def login_command(message: types.Message, state: FSMContext):
-            await message.answer("Пожалуйста, введите ваш персональный токен для авторизации:")
-            await state.set_state(DisinsectorForm.token)
+    await dp.start_polling(bot)
 
-        # Обработчик ввода токена дезинсектора
-        @dp.message(DisinsectorForm.token)
-        async def process_token(message: types.Message, state: FSMContext):
-            token_input = message.text.strip()
+# Запуск бота дезинсектора
 
-            # Проверяем наличие токена в базе данных
-            conn = sqlite3.connect('disinsect_data.db')
-            cur = conn.cursor()
-            cur.execute("SELECT * FROM disinsectors WHERE token = ?", (token_input,))
-            disinsector = cur.fetchone()
-            conn.close()
+# Добавьте новые состояния в Form, если они еще не определены
+class Form(StatesGroup):
+    name = State()
+    object = State()
+    insect_quantity = State()
+    disinsect_experience = State()
+    phone = State()
+    address = State()
+    poison_type = State()  # Новое состояние для типа химиката
+    insect_type = State()  # Новое состояние для вида насекомого
 
-            if disinsector:
-                await message.answer(f"Добро пожаловать, {disinsector[1]}! Вы успешно авторизованы.")
-                await state.clear()
-                # Показать меню или данные дезинсектора
-                await show_disinsector_data(message, disinsector)
-            else:
-                await message.answer("Токен неверен, попробуйте снова.")
-                await state.clear()
+async def start_disinsector_bot(token):
+    bot = Bot(token=token)
+    storage = MemoryStorage()
+    dp = Dispatcher(storage=storage)
 
-        async def main():
-            try:
-                await dp.start_polling(bot)
-            finally:
-                await bot.session.close()
+    @dp.message(CommandStart())
+    async def start_command(message: types.Message, state: FSMContext):
+        disinsector = get_disinsector_by_token(token)
+        if disinsector:
+            await message.answer(f"Добро пожаловать, {disinsector[1]}!")
+            await state.update_data(disinsector_id=disinsector[0])
+            await state.set_state(DisinsectorForm.order_status)
+        else:
+            await message.answer("Ошибка авторизации.")
 
-    # Основная функция для запуска всех ботов
-    async def main():
-        tasks = [start_bot(bot_token) for bot_token in TOKENS.values()]
-        await asyncio.gather(*tasks)
+    # Обработчик выбора заявки для обновления
+    @dp.callback_query(F.data.startswith('update_order_'))
+    async def process_order_update(callback: types.CallbackQuery, state: FSMContext):
+        order_id = callback.data.split('_')[2]  # Получаем id заявки
+        await state.update_data(order_id=order_id)
+        await callback.answer()
+        await callback.message.answer("Какой химикат будет использоваться?")
+        await state.set_state(Form.poison_type)
 
-    if __name__ == '__main__':
-        asyncio.run(main())
+    # Обработчик ввода типа химиката
+    @dp.message(Form.poison_type)
+    async def process_poison_type(message: types.Message, state: FSMContext):
+        poison_type = message.text
+        await state.update_data(poison_type=poison_type)
+        await message.answer("Какой вид насекомого?")
+        await state.set_state(Form.insect_type)
+
+    # Обработчик ввода вида насекомого
+    @dp.message(Form.insect_type)
+    async def process_insect_type(message: types.Message, state: FSMContext):
+        insect_type = message.text
+        user_data = await state.get_data()
+        order_id = user_data['order_id']
+        poison_type = user_data['poison_type']
+
+        # Теперь мы можем обновить данные в базе для заявки
+        conn = sqlite3.connect('disinsect_data.db')
+        cur = conn.cursor()
+        cur.execute('''
+            UPDATE orders 
+            SET poison_type = ?, insect_type = ?
+            WHERE order_id = ?
+        ''', (poison_type, insect_type, order_id))
+        conn.commit()
+        conn.close()
+
+        await message.answer(
+            f"Данные заявки {order_id} обновлены: \nХимикат: {poison_type}\nВид насекомого: {insect_type}")
+        await state.clear()
+
+    # Основная функция запуска диспетчера
+    await dp.start_polling(bot)
+
+# Функция отправки webhook на веб-приложение
+def send_webhook(data):
+    url = "http://127.0.0.1:5000/webhook"
+    response = requests.post(url, json=data)
+    return response.json()
 
 
+# Основная функция для запуска всех ботов
+async def main():
+    disinsector_tokens = get_all_disinsector_tokens()
+    tasks = [
+        start_client_bot(TOKENS['client_bot'])  # Бот клиента
+    ]
+    for token in disinsector_tokens:
+        tasks.append(start_disinsector_bot(token))  # Боты дезинсекторов
+    await asyncio.gather(*tasks)
+
+
+if __name__ == '__main__':
+    asyncio.run(main())

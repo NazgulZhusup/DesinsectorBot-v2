@@ -1,0 +1,90 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Личный кабинет дезинсектора</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            background-color: #091235;
+            color: #fff;
+        }
+        h2, h3 {
+            color: #88A9C3;
+        }
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            background-color: #2B4257;
+            color: #fff;
+        }
+        th, td {
+            border: 1px solid #88A9C3;
+            padding: 8px;
+            text-align: left;
+        }
+        th {
+            background-color: #88A9C3;
+            color: #091235;
+        }
+        select, input[type="submit"] {
+            padding: 8px;
+            background-color: #88A9C3;
+            border: none;
+            color: #091235;
+            cursor: pointer;
+        }
+        a {
+            color: #88A9C3;
+        }
+        a:hover {
+            color: #fff;
+        }
+    </style>
+</head>
+<body>
+    <h2>Добро пожаловать в личный кабинет!</h2>
+
+    <h3>Ваши заявки:</h3>
+
+    {% if orders %}
+    <table border="1">
+        <tr>
+            <th>Номер заявки</th>
+            <th>Имя клиента</th>
+            <th>Телефон</th>
+            <th>Адрес</th>
+            <th>Статус</th>
+            <th>Сметная стоимость</th>
+            <th>Окончательная стоимость</th>
+            <th>Тип химиката</th>
+            <th>Вид насекомого</th>
+            <th>Количество насекомых</th>
+        </tr>
+        {% for order in orders %}
+        <tr>
+            <td>{{ order[0] }}</td>
+            <td>{{ order[1] }}</td>
+            <td>{{ order[2] }}</td>
+            <td>{{ order[3] }}</td>
+            <td>{{ order[4] }}</td>
+            <td>{{ order[5] }}</td>
+            <td>{{ order[6] }}</td>
+            <td>{{ order[7] }}</td>
+            <td>{{ order[8] }}</td>
+            <td>{{ order[9] }}</td>
+        </tr>
+        {% endfor %}
+    </table>
+    {% else %}
+        <p>На данный момент у вас нет заявок.</p>
+    {% endif %}
+
+    <br>
+    <a href="{{ url_for('logout') }}">Выйти</a>
+</body>
+</html>
+
+
+

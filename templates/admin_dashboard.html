@@ -1,0 +1,145 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Панель управления и отчеты</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            background-color: #091235;
+            color: #fff;
+        }
+        h2, h3 {
+            color: #88A9C3;
+        }
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            background-color: #2B4257;
+            color: #fff;
+        }
+        th, td {
+            border: 1px solid #88A9C3;
+            padding: 8px;
+            text-align: left;
+        }
+        th {
+            background-color: #88A9C3;
+            color: #091235;
+        }
+        select, input[type="submit"] {
+            padding: 8px;
+            background-color: #88A9C3;
+            border: none;
+            color: #091235;
+            cursor: pointer;
+        }
+        a {
+            color: #88A9C3;
+        }
+        a:hover {
+            color: #fff;
+        }
+    </style>
+</head>
+<body>
+    <h2>Добро пожаловать, {{ user }}!</h2>
+
+    <h3>Регистрация нового дезинсектора</h3>
+<form method="POST" action="{{ url_for('register_disinsector') }}">
+    <label for="name">Имя дезинсектора:</label>
+    <input type="text" name="name" required>
+
+    <label for="email">Email дезинсектора:</label>
+    <input type="email" name="email" required>
+
+    <label for="password">Пароль:</label>
+    <input type="password" name="password" required>
+
+    <label for="token">Токен бота:</label>
+    <input type="text" name="token" required>
+
+    <input type="submit" value="Зарегистрировать дезинсектора">
+</form>
+
+    {% if session.get('role') == 'admin' %}
+    <h3>Отчеты по заявкам</h3>
+    <form method="POST">
+        <label for="disinsector">Фильтр по дезинсектору:</label>
+        <select name="disinsector">
+            <option value="Все">Все</option>
+            {% for disinsector in disinsectors %}
+                <option value="{{ disinsector[0] }}">{{ disinsector[1] }}</option>
+            {% endfor %}
+        </select>
+        <input type="submit" name="export_json" value="Экспортировать в JSON">
+    </form>
+    <br><br>
+    {% endif %}
+
+    <h3>Фильтр по статусу заявок:</h3>
+    <form method="GET" action="{{ url_for('admin_dashboard') }}">
+        <select name="status">
+            <option value="Все" {% if filter_status == "Все" %}selected{% endif %}>Все</option>
+            <option value="Новая" {% if filter_status == 'Новая' %}selected{% endif %}>Новая</option>
+            <option value="В процессе" {% if filter_status == 'В процессе' %}selected{% endif %}>В процессе</option>
+            <option value="Выполнено" {% if filter_status == 'Выполнено' %}selected{% endif %}>Выполнено</option>
+        </select>
+        <input type="submit" value="Применить">
+    </form>
+
+    <h3>Список заявок (клиентов):</h3>
+    {% if clients %}
+    <table border="1">
+        <tr>
+            <th>Номер заявки</th>
+            <th>Имя клиента</th>
+            <th>Телефон</th>
+            <th>Адрес</th>
+            <th>Статус</th>
+            <th>Сметная стоимость</th>
+            <th>Окончательная стоимость</th>
+            <th>Тип химиката</th>
+            <th>Вид насекомого</th>
+            <th>Количество насекомых</th>
+        </tr>
+        {% for client in clients %}
+        <tr>
+            <td>{{ client[0] }}</td>
+            <td>{{ client[1] }}</td>
+            <td>{{ client[2] }}</td>
+            <td>{{ client[3] }}</td>
+            <td>{{ client[4] }}</td>
+            <td>{{ client[5] }}</td>
+            <td>{{ client[6] }}</td>
+            <td>{{ client[7] }}</td>
+            <td>{{ client[8] }}</td>
+            <td>{{ client[9] }}</td>
+            <td>
+                <form method="POST">
+                    <input type="hidden" name="client_id" value="{{ client[0] }}">
+                    <select name="status">
+                        <option value="Новая" {% if client[4] == 'Новая' %}selected{% endif %}>Новая</option>
+                        <option value="В процессе" {% if client[4] == 'В процессе' %}selected{% endif %}>В процессе</option>
+                        <option value="Выполнено" {% if client[4] == 'Выполнено' %}selected{% endif %}>Выполнено</option>
+                    </select>
+                    <input type="submit" value="Обновить статус">
+                </form>
+            </td>
+        </tr>
+        {% endfor %}
+    </table>
+    {% else %}
+        <p>Заявок нет.</p>
+    {% endif %}
+
+    <br>
+    <a href="{{ url_for('export_csv') }}">Экспортировать заявки в CSV</a>
+    <br><br>
+    <a href="{{ url_for('export_json') }}">Экспортировать заявки в JSON</a>
+
+    <br><br>
+    <a href="{{ url_for('logout') }}">Выйти</a>
+</body>
+</html>
