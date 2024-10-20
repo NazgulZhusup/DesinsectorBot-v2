@@ -3,15 +3,16 @@ from flask import Flask, render_template, request, redirect, url_for, session, f
 import sqlite3
 import csv
 from io import StringIO
-from telegram import Bot
-from config import TOKENS
+from aiogram import Bot
+from config import TOKEN
 
 # Инициализация приложения
 app = Flask(__name__)
 app.secret_key = 'your_secret_key'
 
 # Инициализация бота
-bot = Bot(token=TOKENS['client_bot'])
+bot = TOKEN
+
 
 @app.route('/')
 def index():

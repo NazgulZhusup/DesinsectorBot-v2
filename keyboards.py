@@ -1,5 +1,3 @@
-# keyboards.py
-
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup, KeyboardButton, ReplyKeyboardMarkup
 
 # Клавиатура приветствия с кнопкой "Начать"
@@ -27,6 +25,21 @@ inl_kb_experience = InlineKeyboardMarkup(inline_keyboard=[
     [InlineKeyboardButton(text="Нет", callback_data="experience_no")]
 ])
 
+# Клавиатура для выбора химиката
+inl_kb_poison_type = InlineKeyboardMarkup(inline_keyboard=[
+    [InlineKeyboardButton(text="Химикат 1", callback_data="poison_1")],
+    [InlineKeyboardButton(text="Химикат 2", callback_data="poison_2")],
+    [InlineKeyboardButton(text="Химикат 3", callback_data="poison_3")]
+])
+
+# Клавиатура для выбора вида насекомого
+inl_kb_insect_type = InlineKeyboardMarkup(inline_keyboard=[
+    [InlineKeyboardButton(text="Клопы", callback_data="insect_bedbugs")],
+    [InlineKeyboardButton(text="Тараканы", callback_data="insect_cockroaches")],
+    [InlineKeyboardButton(text="Муравьи", callback_data="insect_ants")],
+    [InlineKeyboardButton(text="Клещи", callback_data="insect_ticks")]
+])
+
 # Клавиатура для сбора контакта
 kb_contact = ReplyKeyboardMarkup(
     keyboard=[
@@ -37,3 +50,5 @@ kb_contact = ReplyKeyboardMarkup(
     resize_keyboard=True,
     one_time_keyboard=True
 )
+
+
