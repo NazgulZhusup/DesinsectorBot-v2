@@ -5,6 +5,10 @@ inl_kb_greetings = InlineKeyboardMarkup(inline_keyboard=[
     [InlineKeyboardButton(text="Начать", callback_data="start")]
 ])
 
+inl_kb_dis_greetings = InlineKeyboardMarkup(inline_keyboard=[
+    [InlineKeyboardButton(text="Начать", callback_data="OK")]
+])
+
 # Клавиатура выбора объекта
 inl_kb_object = InlineKeyboardMarkup(inline_keyboard=[
     [InlineKeyboardButton(text="Дом", callback_data="object_home")],

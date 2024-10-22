@@ -6,9 +6,10 @@ from aiogram.fsm.state import State, StatesGroup
 from aiogram.fsm.storage.memory import MemoryStorage
 import re
 import keyboards as kb
-from db import add_client, create_order
-from util import get_next_disinsector
+from db import add_client
+from db_operations import get_next_disinsector, create_order
 import uuid
+from disinsectors_bot import send_notification_to_disinsector_and_start_questions
 from config import TOKEN
 
 client_token = TOKEN
@@ -132,6 +133,9 @@ async def start_client_bot(token):
         # Создаем заявку
         order_id = str(uuid.uuid4())[:8]  # Уникальный идентификатор заявки
         create_order(client_id, order_id, disinsector_id)
+
+        # Отправка уведомления дезинсектору
+        await send_notification_to_disinsector_and_start_questions(disinsector_id, user_data, state)
 
         await message.answer(
             f"Спасибо, {user_data['name']}! Ваши данные сохранены.\n"

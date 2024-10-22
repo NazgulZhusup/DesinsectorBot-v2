@@ -27,6 +27,16 @@ class DisinsectorForm(StatesGroup):
     client_area = State()
     estimated_price = State()
 
+
+
+def get_disinsector_token(disinsector_id):
+    conn = sqlite3.connect('disinsect_data.db')
+    cur = conn.cursor()
+    cur.execute("SELECT token FROM disinsectors WHERE id = ?", (disinsector_id,))
+    result = cur.fetchone()
+    conn.close()
+    return result[0] if result else None
+
 async def start_disinsector_bot(token):
     logging.info(f"Starting disinsector bot with token: {token}")
     bot = Bot(token=token)
@@ -41,17 +51,24 @@ async def start_disinsector_bot(token):
             if disinsector:
                 user_id = message.from_user.id
                 await message.answer(f"Добро пожаловать, {disinsector[1]}! Ваш user_id: {user_id}")
-
                 await state.update_data(disinsector_id=disinsector[0])
-
-                # Отправляем вопрос с кнопками
-                logging.info(f"Disinsector {disinsector[1]} ({disinsector[0]}) logged in")
-                await message.answer("Какой химикат будет использоваться?", reply_markup=kb.inl_kb_poison_type)
-                await state.set_state(DisinsectorForm.poison_type)
+                logging.info(f"Disinsector {disinsector[1]} ({disinsector[0]}) registered for the first time")
             else:
                 await message.answer("Ошибка авторизации.")
         except Exception as e:
             logging.error(f"Error during the start command: {e}")
+
+    # Обработчик уведомления о новой заявке
+    @dp.callback_query(F.data == 'accept_order')
+    async def process_accept_order(callback: types.CallbackQuery, state: FSMContext):
+        await callback.answer()
+        await callback.message.answer("Какой химикат будет использоваться?", reply_markup=kb.inl_kb_poison_type)
+        await state.set_state(DisinsectorForm.poison_type)
+
+    @dp.callback_query(F.data == 'decline_order')
+    async def process_decline_order(callback: types.CallbackQuery, state: FSMContext):
+        await callback.answer("Вы отказались от заявки.", show_alert=True)
+        await state.clear()
 
     # Обработчик выбора химиката
     @dp.callback_query(F.data.startswith('poison_'))
@@ -110,11 +127,11 @@ async def start_disinsector_bot(token):
             poison_type = user_data.get('poison_type')
             insect_type = user_data.get('insect_type')
             client_area = user_data.get('client_area')
-            order_id = user_data.get('order_id')  # Предположим, что order_id уже передан ранее
+            disinsector_id = user_data.get('disinsector_id')
 
             # Обновляем заявку в базе данных
             update_order(
-                order_id=order_id,
+                order_id=user_data.get('order_id'),
                 poison_type=poison_type,
                 insect_type=insect_type,
                 client_area=client_area,
@@ -122,7 +139,7 @@ async def start_disinsector_bot(token):
             )
 
             await message.answer(
-                f"Данные заявки {order_id} обновлены:\n"
+                f"Данные заявки обновлены:\n"
                 f"Химикат: {poison_type}\n"
                 f"Вид насекомого: {insect_type}\n"
                 f"Площадь помещения: {client_area} кв.м\n"
@@ -137,6 +154,33 @@ async def start_disinsector_bot(token):
             logging.error(f"Error during estimated price processing: {e}")
 
     await dp.start_polling(bot)
+
+async def send_notification_to_disinsector_and_start_questions(disinsector_id, user_data, state):
+    token = get_disinsector_token(disinsector_id)
+    if token:
+        async with Bot(token=token) as bot:
+            conn = sqlite3.connect('disinsect_data.db')
+            cur = conn.cursor()
+            cur.execute("SELECT user_id FROM disinsectors WHERE id = ?", (disinsector_id,))
+            result = cur.fetchone()
+            conn.close()
+
+            if result:
+                disinsector_user_id = result[0]
+                message_text = f"Новая заявка: {user_data['name']}, объект: {user_data['object']}\nСогласны взять заявку в работу?"
+                inline_kb = types.InlineKeyboardMarkup(
+                    inline_keyboard=[
+                        [
+                            types.InlineKeyboardButton(text="OK", callback_data="accept_order"),
+                            types.InlineKeyboardButton(text="Нет", callback_data="decline_order")
+                        ]
+                    ]
+                )
+                await bot.send_message(chat_id=disinsector_user_id, text=message_text, reply_markup=inline_kb)
+            else:
+                print(f"Ошибка: не удалось найти user_id для дезинсектора с ID {disinsector_id}")
+    else:
+        print(f"Ошибка: Токен не найден для дезинсектора с ID {disinsector_id}")
 
 async def main():
     try:

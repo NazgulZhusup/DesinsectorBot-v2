@@ -1,8 +1,6 @@
 import sqlite3
-from config import TOKEN
-import uuid
+import logging
 
-# Функция для инициализации базы данных
 def init_db():
     conn = sqlite3.connect('disinsect_data.db')
     cur = conn.cursor()
@@ -33,10 +31,6 @@ def init_db():
             final_price REAL,
             poison_type TEXT,
             insect_type TEXT,
-            insect_quantity TEXT,
-            client_contact TEXT,
-            client_address TEXT,
-            client_property_type TEXT,
             client_area REAL,
             FOREIGN KEY (client_id) REFERENCES users(id)
         )
@@ -57,65 +51,65 @@ def init_db():
     conn.commit()
     conn.close()
 
-
 # Функция для добавления нового клиента в базу данных
 def add_client(name, object_type, insect_quantity, disinsect_experience, phone, address):
-    conn = sqlite3.connect('disinsect_data.db')
-    cur = conn.cursor()
-    cur.execute('''
-        INSERT INTO users (name, object, insect_quantity, disinsect_experience, phone, address)
-        VALUES (?, ?, ?, ?, ?, ?)
-    ''', (name, object_type, insect_quantity, disinsect_experience, phone, address))
-    conn.commit()
-    client_id = cur.lastrowid
-    conn.close()
-    return client_id
-
-
-# Функция для создания новой заявки
-def create_order(client_id, order_id, disinsector_id=None, estimated_price=None, final_price=None, poison_type=None,
-                 insect_type=None, client_area=None):
-    conn = sqlite3.connect('disinsect_data.db')
-    cur = conn.cursor()
-    cur.execute('''
-        INSERT INTO orders (client_id, order_id, disinsector_id, estimated_price, final_price, poison_type, insect_type, client_area)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-    ''', (client_id, order_id, disinsector_id, estimated_price, final_price, poison_type, insect_type, client_area))
-    conn.commit()
-    conn.close()
+    try:
+        conn = sqlite3.connect('disinsect_data.db')
+        cur = conn.cursor()
+        cur.execute('''
+            INSERT INTO users (name, object, insect_quantity, disinsect_experience, phone, address)
+            VALUES (?, ?, ?, ?, ?, ?)
+        ''', (name, object_type, insect_quantity, disinsect_experience, phone, address))
+        conn.commit()
+        client_id = cur.lastrowid
+        conn.close()
+        return client_id
+    except sqlite3.Error as e:
+        logging.error(f"Ошибка добавления клиента: {e}")
+        return None
 
 # Функция для получения дезинсектора по токену
 def get_disinsector_by_token(token):
-    conn = sqlite3.connect('disinsect_data.db')
-    cur = conn.cursor()
-    cur.execute('SELECT id, name FROM disinsectors WHERE token = ?', (token,))
-    disinsector = cur.fetchone()
-    conn.close()
-    return disinsector
+    try:
+        conn = sqlite3.connect('disinsect_data.db')
+        cur = conn.cursor()
+        cur.execute('SELECT id, name FROM disinsectors WHERE token = ?', (token,))
+        disinsector = cur.fetchone()
+        conn.close()
+        return disinsector
+    except sqlite3.Error as e:
+        logging.error(f"Ошибка при получении дезинсектора по токену: {e}")
+        return None
 
 # Функция для получения всех токенов дезинсекторов
 def get_all_disinsector_tokens():
-    conn = sqlite3.connect('disinsect_data.db')
-    cur = conn.cursor()
-    cur.execute('SELECT token FROM disinsectors')
-    tokens = [row[0] for row in cur.fetchall()]
-    conn.close()
-    return tokens
+    try:
+        conn = sqlite3.connect('disinsect_data.db')
+        cur = conn.cursor()
+        cur.execute('SELECT token FROM disinsectors')
+        tokens = [row[0] for row in cur.fetchall()]
+        conn.close()
+        return tokens
+    except sqlite3.Error as e:
+        logging.error(f"Ошибка при получении всех токенов дезинсекторов: {e}")
+        return []
 
 # Функция для обновления заявки
-def update_order(order_id, poison_type=None, insect_type=None, client_area=None, estimated_price=None, final_price=None,
-                 order_status=None):
-    conn = sqlite3.connect('disinsect_data.db')
-    cur = conn.cursor()
+def update_order(order_id, poison_type=None, insect_type=None, client_area=None, estimated_price=None, final_price=None, order_status=None):
+    try:
+        conn = sqlite3.connect('disinsect_data.db')
+        cur = conn.cursor()
 
-    cur.execute('''
-        UPDATE orders
-        SET poison_type = ?, insect_type = ?, client_area = ?, estimated_price = ?, final_price = ?, order_status = ?
-        WHERE order_id = ?
-    ''', (poison_type, insect_type, client_area, estimated_price, final_price, order_status, order_id))
+        cur.execute('''
+            UPDATE orders
+            SET poison_type = ?, insect_type = ?, client_area = ?, estimated_price = ?, final_price = ?, order_status = ?
+            WHERE order_id = ?
+        ''', (poison_type, insect_type, client_area, estimated_price, final_price, order_status, order_id))
 
-    conn.commit()
-    conn.close()
+        conn.commit()
+        conn.close()
+    except sqlite3.Error as e:
+        logging.error(f"Ошибка при обновлении заказа: {e}")
 
 # Инициализация базы данных при первом запуске
 init_db()
