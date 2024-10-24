@@ -1,16 +1,20 @@
 import asyncio
+import logging
+import re
+import uuid
+
 from aiogram import Bot, Dispatcher, types, F
 from aiogram.filters import CommandStart
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.fsm.storage.memory import MemoryStorage
-import re
+
 import keyboards as kb
-from db import add_client
-from db_operations import get_next_disinsector, create_order
-import uuid
-from disinsectors_bot import send_notification_to_disinsector_and_start_questions
 from config import TOKEN
+from db import add_order
+from shared_functions import get_next_disinsector
+from disinsectors_bot import send_notification_to_disinsector_and_start_questions
+from shared_functions import send_notification_to_disinsector
 
 client_token = TOKEN
 bot = Bot(token=client_token)
@@ -28,7 +32,7 @@ class ClientForm(StatesGroup):
 async def start_client_bot(token):
     bot = Bot(token=token)
     storage = MemoryStorage()
-    dp = Dispatcher(storage=storage)
+    dp = Dispatcher(bot=bot, storage=storage)
 
     @dp.message(CommandStart())
     async def start_command(message: types.Message, state: FSMContext):
@@ -111,39 +115,56 @@ async def start_client_bot(token):
             return
         await state.update_data(address=address)
 
-        # Сохранение клиента
+        # Получаем все данные из состояния
         user_data = await state.get_data()
-        client_id = add_client(
+
+        # Генерируем или используем существующий order_id
+        order_id = user_data.get('order_id')
+        if not order_id:
+            order_id = str(uuid.uuid4())[:8]  # Генерация уникального идентификатора заявки
+            await state.update_data(order_id=order_id)
+            logging.info(f"Новый order_id сгенерирован: {order_id}")
+        else:
+            logging.info(f"Существующий order_id: {order_id}")
+
+        # Проверяем обновленные данные состояния
+        user_data = await state.get_data()
+
+        # Назначение дезинсектора
+        disinsector_id = get_next_disinsector()
+
+        if disinsector_id is None:
+            await message.answer("Ошибка: не удалось назначить дезинсектора. Попробуйте позже.")
+            return
+
+        # Сохраняем заказ в базу данных
+        add_order(
+            order_id=order_id,
+            disinsector_id=disinsector_id,
             name=user_data['name'],
             object_type=user_data['object'],
             insect_quantity=user_data['insect_quantity'],
             disinsect_experience=user_data['disinsect_experience'],
             phone=user_data['phone'],
-            address=user_data['address']
+            address=user_data['address'],
+            status='Новая'
         )
 
-        # Получаем ID дезинсектора
-        disinsector_id = get_next_disinsector()
-
-        # Проверяем, удалось ли назначить дезинсектора
-        if disinsector_id is None:
-            await message.answer("Ошибка: не удалось назначить дезинсектора. Попробуйте позже.")
-            return
-
-        # Создаем заявку
-        order_id = str(uuid.uuid4())[:8]  # Уникальный идентификатор заявки
-        create_order(client_id, order_id, disinsector_id)
-
         # Отправка уведомления дезинсектору
+        message_text = f"Новая заявка от {user_data['name']}. Объект: {user_data['object']}, Адрес: {user_data['address']}, Количество насекомых: {user_data['insect_quantity']}"
+        await send_notification_to_disinsector(disinsector_id, message_text)
         await send_notification_to_disinsector_and_start_questions(disinsector_id, user_data, state)
 
         await message.answer(
             f"Спасибо, {user_data['name']}! Ваши данные сохранены.\n"
             f"Телефон: {user_data['phone']}\nАдрес: {user_data['address']}"
         )
+
+        # Очищаем состояние
         await state.clear()
 
     await dp.start_polling(bot)
 
 if __name__ == '__main__':
     asyncio.run(start_client_bot(TOKEN))
+
