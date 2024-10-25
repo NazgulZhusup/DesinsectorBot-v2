@@ -3,6 +3,7 @@ from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup, KeyboardBu
 # Клавиатура приветствия с кнопкой "Начать"
 inl_kb_greetings = InlineKeyboardMarkup(inline_keyboard=[
     [InlineKeyboardButton(text="Начать", callback_data="start")]
+
 ])
 
 inl_kb_dis_greetings = InlineKeyboardMarkup(inline_keyboard=[

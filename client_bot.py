@@ -4,20 +4,20 @@ import re
 import uuid
 
 from aiogram import Bot, Dispatcher, types, F
-from aiogram.filters import CommandStart
+from aiogram.filters import CommandStart, StateFilter
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.fsm.storage.memory import MemoryStorage
 
 import keyboards as kb
 from config import TOKEN
-from db import add_order, update_order, add_client
+from db import add_order, add_client
 from shared_functions import get_next_disinsector, send_notification_to_disinsector_and_start_questions
 
 client_token = TOKEN
 bot = Bot(token=client_token)
 storage = MemoryStorage()
-dp = Dispatcher(bot=bot, storage=storage)
+dp = Dispatcher(storage=storage)
 
 logging.basicConfig(
     level=logging.INFO,
@@ -31,6 +31,7 @@ logging.basicConfig(
 
 class ClientForm(StatesGroup):
     name = State()
+    waiting_for_start = State()
     object_type = State()
     insect_quantity = State()
     disinsect_experience = State()
@@ -49,53 +50,53 @@ async def process_name(message: types.Message, state: FSMContext):
     await state.update_data(name=message.text)
     await message.answer(
         f"{message.text}, ответьте, пожалуйста, на несколько вопросов, чтобы мы могли просчитать стоимость дезинсекции.",
-        reply_markup=kb.inl_kb_greetings
+        reply_markup=kb.inl_kb_greetings  # Клавиатура с кнопкой "Начать", callback_data='start'
     )
-    await state.set_state(ClientForm.name)
+    await state.set_state(ClientForm.waiting_for_start)
 
 
-@dp.callback_query(F.data == 'start')
+@dp.callback_query(F.data == 'start', StateFilter(ClientForm.waiting_for_start))
 async def process_start(callback: types.CallbackQuery, state: FSMContext):
     await callback.answer()
     await callback.message.answer(
         "Расскажите, пожалуйста, подробнее об объекте. У вас:",
-        reply_markup=kb.inl_kb_object_type
+        reply_markup=kb.inl_kb_object_type  # Клавиатура с вариантами, callback_data='object_flat', 'object_house', и т.д.
     )
     await state.set_state(ClientForm.object_type)
 
 
-@dp.callback_query(F.data.startswith('object_type'))
+@dp.callback_query(F.data.startswith('object_'), StateFilter(ClientForm.object_type))
 async def process_object(callback: types.CallbackQuery, state: FSMContext):
-    object_selected = callback.data.split('_')[1]
+    object_selected = callback.data.split('_', 1)[1]
     await state.update_data(object_type=object_selected)
     await callback.answer()
     await callback.message.answer(
         "Сколько насекомых вы обнаружили?",
-        reply_markup=kb.inl_kb_insect_quantity
+        reply_markup=kb.inl_kb_insect_quantity  # Клавиатура с вариантами количества
     )
     await state.set_state(ClientForm.insect_quantity)
 
 
-@dp.callback_query(F.data.startswith('quantity_'))
+@dp.callback_query(F.data.startswith('quantity_'), StateFilter(ClientForm.insect_quantity))
 async def process_insect_quantity(callback: types.CallbackQuery, state: FSMContext):
-    quantity_selected = callback.data.split('_')[1]
+    quantity_selected = callback.data.split('_', 1)[1]
     await state.update_data(insect_quantity=quantity_selected)
     await callback.answer()
     await callback.message.answer(
         "Есть ли у вас опыт дезинсекции?",
-        reply_markup=kb.inl_kb_experience
+        reply_markup=kb.inl_kb_experience  # Клавиатура с вариантами опыта
     )
     await state.set_state(ClientForm.disinsect_experience)
 
 
-@dp.callback_query(F.data.startswith('experience_'))
+@dp.callback_query(F.data.startswith('experience_'), StateFilter(ClientForm.disinsect_experience))
 async def process_disinsect_experience(callback: types.CallbackQuery, state: FSMContext):
-    experience_selected = callback.data.split('_')[1]
+    experience_selected = callback.data.split('_', 1)[1]
     await state.update_data(disinsect_experience=experience_selected)
     await callback.answer()
     await callback.message.answer(
         "Пожалуйста, отправьте ваш номер телефона:",
-        reply_markup=kb.kb_contact
+        reply_markup=kb.kb_contact  # Клавиатура для отправки контакта
     )
     await state.set_state(ClientForm.phone)
 
@@ -120,7 +121,6 @@ async def process_phone_text(message: types.Message, state: FSMContext):
 
 
 @dp.message(ClientForm.address)
-@dp.message(ClientForm.address)
 async def process_address(message: types.Message, state: FSMContext):
     try:
         address = message.text.strip()
@@ -131,6 +131,11 @@ async def process_address(message: types.Message, state: FSMContext):
 
         # Получаем все данные из состояния
         user_data = await state.get_data()
+
+        required_fields = ['name', 'phone', 'address', 'object_type', 'insect_quantity', 'disinsect_experience']
+        if not all(field in user_data for field in required_fields):
+            await message.answer("Ошибка: недостаточно данных для создания заявки.")
+            return
 
         # Сохраняем данные клиента в базу данных
         client_id = add_client(
@@ -189,8 +194,6 @@ async def process_address(message: types.Message, state: FSMContext):
     except Exception as e:
         logging.error(f"Ошибка при обработке адреса: {e}")
         await message.answer("Произошла ошибка при сохранении данных заявки. Пожалуйста, попробуйте снова.")
-
-
 
 
 async def main():
