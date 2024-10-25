@@ -51,7 +51,7 @@ async def process_name(message: types.Message, state: FSMContext):
         f"{message.text}, ответьте, пожалуйста, на несколько вопросов, чтобы мы могли просчитать стоимость дезинсекции.",
         reply_markup=kb.inl_kb_greetings
     )
-    await state.set_state(ClientForm.object_type)
+    await state.set_state(ClientForm.object)
 
 
 @dp.callback_query(F.data == 'start')
