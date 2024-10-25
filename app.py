@@ -256,31 +256,51 @@ def export_csv():
         return redirect(url_for('admin_login'))
 
 # Маршрут для экспорта заявок в JSON (только для администратора)
+
 @app.route('/export_json')
 def export_json():
     if 'user_id' in session and session.get('role') == 'admin':
         conn = sqlite3.connect('disinsect_data.db')
         cur = conn.cursor()
+
+        # Извлекаем все данные из таблицы orders
         cur.execute('''
-            SELECT c.name, c.phone, c.address, o.order_status
-            FROM orders o
-            JOIN clients c ON o.client_id = c.id
+            SELECT order_id, client_id, disinsector_id, name, object, insect_quantity, disinsect_experience,
+                   phone, address, order_status, order_date, estimated_price, final_price, poison_type, insect_type, client_area
+            FROM orders
         ''')
         orders = cur.fetchall()
+
+        # Закрываем соединение с базой данных
         conn.close()
 
+        # Преобразуем полученные данные в формат JSON
         orders_list = []
         for order in orders:
             orders_list.append({
-                'name': order[0],
-                'phone': order[1],
-                'address': order[2],
-                'status': order[3]
+                'order_id': order[0],
+                'client_id': order[1],
+                'disinsector_id': order[2],
+                'name': order[3],
+                'object': order[4],
+                'insect_quantity': order[5],
+                'disinsect_experience': order[6],
+                'phone': order[7],
+                'address': order[8],
+                'order_status': order[9],
+                'order_date': order[10],
+                'estimated_price': order[11],
+                'final_price': order[12],
+                'poison_type': order[13],
+                'insect_type': order[14],
+                'client_area': order[15]
             })
 
+        # Возвращаем данные в формате JSON
         return jsonify(orders_list)
     else:
         return redirect(url_for('admin_login'))
+
 
 # Маршрут для отчетов администратора
 @app.route('/admin/reports', methods=['GET', 'POST'])
