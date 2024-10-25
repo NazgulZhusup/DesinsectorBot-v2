@@ -3,35 +3,18 @@ from aiogram import Bot, types
 import logging
 
 def get_disinsector_token(disinsector_id):
-    conn = sqlite3.connect('disinsect_data.db')
-    cur = conn.cursor()
-    cur.execute("SELECT token FROM disinsectors WHERE id = ?", (disinsector_id,))
-    result = cur.fetchone()
-    conn.close()
-    return result[0] if result else None
-
-async def send_notification_to_disinsector(disinsector_id, message_text):
-    token = get_disinsector_token(disinsector_id)
-    if token:
-        async with Bot(token=token) as bot:
-            conn = sqlite3.connect('disinsect_data.db')
-            cur = conn.cursor()
-            cur.execute("SELECT user_id FROM disinsectors WHERE id = ?", (disinsector_id,))
-            result = cur.fetchone()
+    try:
+        conn = sqlite3.connect('disinsect_data.db')
+        cur = conn.cursor()
+        cur.execute("SELECT token FROM disinsectors WHERE id = ?", (disinsector_id,))
+        result = cur.fetchone()
+        return result[0] if result else None
+    except sqlite3.Error as e:
+        logging.error(f"Ошибка при получении токена дезинсектора: {e}")
+        return None
+    finally:
+        if conn:
             conn.close()
-
-            if result:
-                disinsector_user_id = result[0]
-
-                if disinsector_user_id is None or not isinstance(disinsector_user_id, (int, str)):
-                    print(f"Ошибка: некорректный chat_id для дезинсектора с ID {disinsector_id}")
-                    return
-
-                await bot.send_message(chat_id=disinsector_user_id, text=message_text)
-            else:
-                print(f"Ошибка: не удалось найти user_id для дезинсектора с ID {disinsector_id}")
-    else:
-        print(f"Ошибка: Токен не найден для дезинсектора с ID {disinsector_id}")
 
 
 def get_next_disinsector():
@@ -74,5 +57,69 @@ def get_next_disinsector():
     except sqlite3.Error as e:
         logging.error(f"Ошибка при получении следующего дезинсектора: {e}")
         return None
+
+# shared_functions.py
+
+async def send_notification_to_disinsector_and_start_questions(disinsector_id, order_id):
+    token = get_disinsector_token(disinsector_id)
+    if token:
+        bot = Bot(token=token)
+        try:
+            conn = sqlite3.connect('disinsect_data.db')
+            cur = conn.cursor()
+
+            # Получаем user_id дезинсектора
+            cur.execute("SELECT user_id FROM disinsectors WHERE id = ?", (disinsector_id,))
+            result = cur.fetchone()
+            if result:
+                disinsector_user_id = result[0]
+                if disinsector_user_id:
+
+                    # Получаем данные заказа
+                    cur.execute('''
+                        SELECT o.order_id, c.name, c.address, o.object_type, o.insect_quantity
+                        FROM orders o
+                        JOIN clients c ON o.client_id = c.id
+                        WHERE o.order_id = ?
+                    ''', (order_id,))
+                    order_data = cur.fetchone()
+
+                    if order_data:
+                        message_text = (
+                            f"Новая заявка от {order_data[1]}.\n"
+                            f"Объект: {order_data[3]}\n"
+                            f"Адрес: {order_data[2]}\n"
+                            f"Количество насекомых: {order_data[4]}\n"
+                            "Согласны взять заявку в работу?"
+                        )
+                        inline_kb = types.InlineKeyboardMarkup(
+                            inline_keyboard=[
+                                [
+                                    types.InlineKeyboardButton(
+                                        text="OK",
+                                        callback_data=f"accept_order_{order_id}"
+                                    ),
+                                    types.InlineKeyboardButton(
+                                        text="Нет",
+                                        callback_data=f"decline_order_{order_id}"
+                                    )
+                                ]
+                            ]
+                        )
+                        await bot.send_message(chat_id=disinsector_user_id, text=message_text, reply_markup=inline_kb)
+                    else:
+                        logging.error(f"Не удалось получить данные заказа с order_id {order_id}")
+                else:
+                    logging.error(f"User ID дезинсектора {disinsector_id} не найден.")
+            else:
+                logging.error(f"Дезинсектор с ID {disinsector_id} не найден.")
+        except Exception as e:
+            logging.error(f"Ошибка при отправке уведомления дезинсектору: {e}")
+        finally:
+            await bot.session.close()
+            if conn:
+                conn.close()
+    else:
+        logging.error(f"Токен не найден для дезинсектора с ID {disinsector_id}")
 
 

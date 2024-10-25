@@ -4,8 +4,8 @@ import sqlite3
 import csv
 from io import StringIO
 import logging
-from shared_functions import send_notification_to_disinsector, get_disinsector_token
-from db import add_admin
+from shared_functions import send_notification_to_disinsector_and_start_questions, get_disinsector_token
+from db import add_admin, get_disinsector_by_token, update_disinsector_user_id
 from aiogram import Bot
 from config import TOKEN
 
@@ -13,23 +13,21 @@ from config import TOKEN
 app = Flask(__name__)
 app.secret_key = 'your_secret_key'
 
-# Инициализация бота
-bot = TOKEN
+# Настройка логирования
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(levelname)s - %(message)s',
+    handlers=[
+        logging.FileHandler("web_app.log"),
+        logging.StreamHandler()
+    ]
+)
 
 @app.route('/')
 def index():
     return render_template('index.html')
 
-# Функция для проверки пользователя в базе данных
-def check_user(token, password):
-    conn = sqlite3.connect('disinsect_data.db')
-    cur = conn.cursor()
-
-    cur.execute("SELECT * FROM disinsectors WHERE token = ? AND password = ?", (token, password))
-    user = cur.fetchone()
-    conn.close()
-    return user
-
+# Маршрут для регистрации дезинсектора (только для администратора)
 @app.route('/register_disinsector', methods=['GET', 'POST'])
 def register_disinsector():
     if 'user_id' in session and session.get('role') == 'admin':
@@ -42,75 +40,60 @@ def register_disinsector():
             conn = sqlite3.connect('disinsect_data.db')
             cur = conn.cursor()
 
-            # Проверка, существует ли уже такой email
-            cur.execute("SELECT * FROM admins WHERE email = ?", (email,))
-            admin = cur.fetchone()
+            # Проверка, существует ли уже такой email в таблице disinsectors
+            cur.execute("SELECT * FROM disinsectors WHERE email = ?", (email,))
+            existing_disinsector = cur.fetchone()
 
-            if admin:
+            if existing_disinsector:
                 flash('Ошибка: Этот email уже используется.')
                 return redirect(url_for('admin_dashboard'))
 
             try:
-                # Вставляем данные во все обязательные поля таблицы disinsectors
+                # Вставляем данные в таблицу disinsectors
                 cur.execute('''
-                    INSERT INTO disinsectors (name, email, password, token) 
+                    INSERT INTO disinsectors (name, email, password, token)
                     VALUES (?, ?, ?, ?)
                 ''', (name, email, password, token))
                 conn.commit()
                 flash(f"Дезинсектор {name} успешно зарегистрирован!")
-            except sqlite3.IntegrityError:
+            except sqlite3.IntegrityError as e:
+                logging.error(f"Ошибка при регистрации дезинсектора: {e}")
                 flash('Ошибка: Этот токен уже используется другим дезинсектором.')
             finally:
                 conn.close()
 
             return redirect(url_for('admin_dashboard'))
 
-        return render_template('admin_dashboard.html')
+        return render_template('register_disinsector.html')
     else:
-        return redirect(url_for('login'))
+        return redirect(url_for('admin_login'))
 
-@app.route('/login', methods=['POST'])
-def login():
-    token = request.form.get('token')
-    conn = sqlite3.connect('disinsect_data.db')
-    cur = conn.cursor()
 
-    cur.execute("SELECT id, name FROM disinsectors WHERE token = ?", (token,))
-    disinsector = cur.fetchone()
-
-    conn.close()
-
-    if disinsector:
-        session['disinsector_id'] = disinsector[0]
-        session['role'] = 'disinsector'
-        return redirect(url_for('disinsector_dashboard'))
-    else:
-        flash('Неверный токен, попробуйте снова.')
-        return redirect(url_for('login'))
-
+# Маршрут для входа дезинсектора по токену
 @app.route('/disinsector/login', methods=['GET', 'POST'])
 def disinsector_login():
-    if 'disinsector_id' in session and session.get('role') == 'disinsector':
-        if request.method == 'POST':
-            token = request.form.get('token')
+    if request.method == 'POST':
+        token = request.form.get('token')
 
-            conn = sqlite3.connect('disinsect_data.db')
-            cur = conn.cursor()
+        conn = sqlite3.connect('disinsect_data.db')
+        cur = conn.cursor()
 
-            cur.execute("SELECT id, name FROM disinsectors WHERE token = ?", (token,))
-            disinsector = cur.fetchone()
-            conn.close()
+        cur.execute("SELECT id, name FROM disinsectors WHERE token = ?", (token,))
+        disinsector = cur.fetchone()
+        conn.close()
 
-            if disinsector:
-                session['user_id'] = disinsector[0]
-                session['role'] = 'disinsector'
-                return redirect(url_for('disinsector_dashboard'))
-            else:
-                flash('Неверный токен, попробуйте снова.')
-                return redirect(url_for('disinsector_login'))
+        if disinsector:
+            session['user_id'] = disinsector[0]
+            session['role'] = 'disinsector'
+            return redirect(url_for('disinsector_dashboard'))
+        else:
+            flash('Неверный токен, попробуйте снова.')
+            return redirect(url_for('disinsector_login'))
 
     return render_template('disinsector_login.html')
 
+
+# Маршрут для регистрации администратора
 @app.route('/admin/register', methods=['GET', 'POST'])
 def register_admin():
     if request.method == 'POST':
@@ -126,6 +109,7 @@ def register_admin():
 
     return render_template('register_admin.html')
 
+# Маршрут для входа администратора
 @app.route('/admin/login', methods=['GET', 'POST'])
 def admin_login():
     if request.method == 'POST':
@@ -148,7 +132,7 @@ def admin_login():
 
     return render_template('admin_login.html')
 
-
+# Дашборд администратора
 @app.route('/admin/dashboard', methods=['GET', 'POST'])
 def admin_dashboard():
     logging.info(f"Session: {session}")
@@ -160,11 +144,12 @@ def admin_dashboard():
             conn = sqlite3.connect('disinsect_data.db')
             cur = conn.cursor()
 
-            # Получаем заявки с необходимыми полями
+            # Получаем заявки с необходимыми полями, присоединяя таблицу clients
             cur.execute('''
-                SELECT o.order_id, o.name, o.phone, o.address, o.order_status, 
+                SELECT o.order_id, c.name, c.phone, c.address, o.order_status,
                        o.estimated_price, o.final_price, o.poison_type, o.insect_type, o.insect_quantity
                 FROM orders o
+                JOIN clients c ON o.client_id = c.id
             ''')
 
             orders = cur.fetchall()
@@ -183,12 +168,13 @@ def admin_dashboard():
 
     else:
         logging.warning("Unauthorized access attempt to /admin/dashboard")
-        return redirect(url_for('login'))
+        return redirect(url_for('admin_login'))
 
+# Дашборд дезинсектора
 @app.route('/disinsector/dashboard', methods=['GET', 'POST'])
 def disinsector_dashboard():
-    if 'disinsector_id' in session and session.get('role') == 'disinsector':
-        disinsector_id = session.get('disinsector_id')
+    if 'user_id' in session and session.get('role') == 'disinsector':
+        disinsector_id = session.get('user_id')
 
         conn = sqlite3.connect('disinsect_data.db')
         cur = conn.cursor()
@@ -200,11 +186,12 @@ def disinsector_dashboard():
             cur.execute("UPDATE orders SET order_status = ? WHERE order_id = ?", (new_status, order_id))
             conn.commit()
 
-        # Получаем все заявки, связанные с дезинсектором
+        # Получаем все заявки, связанные с дезинсектором, присоединяя таблицу clients
         cur.execute('''
-            SELECT o.order_id, o.name, o.phone, o.address, o.order_status, 
+            SELECT o.order_id, c.name, c.phone, c.address, o.order_status,
                    o.estimated_price, o.final_price, o.poison_type, o.insect_type, o.client_area
             FROM orders o
+            JOIN clients c ON o.client_id = c.id
             WHERE o.disinsector_id = ?
         ''', (disinsector_id,))
         orders = cur.fetchall()
@@ -218,10 +205,9 @@ def disinsector_dashboard():
             return render_template('disinsector_dashboard.html', orders=[])
 
     else:
-        return redirect(url_for('login'))
+        return redirect(url_for('disinsector_login'))
 
-
-
+# Обновление статуса заявки (только для дезинсектора)
 @app.route('/update_order_status', methods=['POST'])
 def update_order_status():
     if 'user_id' in session and session.get('role') == 'disinsector':
@@ -232,70 +218,25 @@ def update_order_status():
         cur = conn.cursor()
         cur.execute('UPDATE orders SET order_status = ? WHERE order_id = ?', (new_status, order_id))
         conn.commit()
-
-        # Отправка уведомления через Телеграм
-        disinsector_id = request.form.get('disinsector_id')
-        if disinsector_id:
-            message_text = f"Статус вашей заявки {order_id} изменен на {new_status}."
-            asyncio.run(send_notification_to_disinsector(disinsector_id, message_text))
-
         conn.close()
+
+        # Можно добавить отправку уведомления клиенту, если требуется
+
         return jsonify({'status': 'success'})
     else:
         return jsonify({'status': 'error', 'message': 'Unauthorized'})
 
-# Функция отправки уведомления дезинсектору
-async def send_notification_to_disinsector(disinsector_id, message_text):
-    token = get_disinsector_token(disinsector_id)
-    if token:
-        async with Bot(token=token) as bot:
-            # Получаем user_id дезинсектора
-            conn = sqlite3.connect('disinsect_data.db')
-            cur = conn.cursor()
-            cur.execute("SELECT user_id FROM disinsectors WHERE id = ?", (disinsector_id,))
-            result = cur.fetchone()
-            conn.close()
-
-            if result:
-                disinsector_user_id = result[0]
-                if disinsector_user_id:
-                    await bot.send_message(chat_id=disinsector_user_id, text=message_text)
-                else:
-                    logging.error(f"Некорректный user_id для дезинсектора с ID {disinsector_id}")
-            else:
-                logging.error(f"Не удалось найти user_id для дезинсектора с ID {disinsector_id}")
-    else:
-        logging.error(f"Не удалось найти токен для дезинсектора с ID {disinsector_id}")
-
-
-@app.route('/webhook', methods=['POST'])
-def webhook():
-    data = request.json
-
-    client_name = data.get('client_name')
-    order_id = data.get('order_id')
-    status = data.get('order_status')
-    disinsector_id = data.get('disinsector_id')
-
-    conn = sqlite3.connect('disinsect_data.db')
-    cur = conn.cursor()
-    cur.execute('''
-                INSERT INTO orders (name, order_id, order_status, disinsector_id)
-                VALUES (?, ?, ?, ?)
-            ''', (client_name, order_id, status, disinsector_id))
-    conn.commit()
-    conn.close()
-
-    return jsonify({'status': 'ok'})
-
-
-# Экспорт заявок в CSV
+# Маршрут для экспорта заявок в CSV (только для администратора)
 @app.route('/export_csv')
 def export_csv():
-    if 'disinsector_id' in session:
+    if 'user_id' in session and session.get('role') == 'admin':
         conn = sqlite3.connect('disinsect_data.db')
         cur = conn.cursor()
-        cur.execute("SELECT name, phone, address, order_status FROM orders")
+        cur.execute('''
+            SELECT c.name, c.phone, c.address, o.order_status
+            FROM orders o
+            JOIN clients c ON o.client_id = c.id
+        ''')
         orders = cur.fetchall()
         conn.close()
 
@@ -312,16 +253,19 @@ def export_csv():
         response.headers['Content-type'] = 'text/csv'
         return response
     else:
-        return redirect(url_for('login'))
+        return redirect(url_for('admin_login'))
 
-
-# Экспорт заявок в JSON
+# Маршрут для экспорта заявок в JSON (только для администратора)
 @app.route('/export_json')
 def export_json():
-    if 'disinsector_id' in session:
+    if 'user_id' in session and session.get('role') == 'admin':
         conn = sqlite3.connect('disinsect_data.db')
         cur = conn.cursor()
-        cur.execute("SELECT name, phone, address, order_status FROM orders")
+        cur.execute('''
+            SELECT c.name, c.phone, c.address, o.order_status
+            FROM orders o
+            JOIN clients c ON o.client_id = c.id
+        ''')
         orders = cur.fetchall()
         conn.close()
 
@@ -336,50 +280,55 @@ def export_json():
 
         return jsonify(orders_list)
     else:
-        return redirect(url_for('login'))
+        return redirect(url_for('admin_login'))
 
-
-# Маршрут для администраторских отчетов
+# Маршрут для отчетов администратора
 @app.route('/admin/reports', methods=['GET', 'POST'])
 def admin_reports():
     if 'user_id' in session and session.get('role') == 'admin':
         conn = sqlite3.connect('disinsect_data.db')
         cur = conn.cursor()
 
+        disinsectors = []
+        data_list = []
+
+        # Получаем список дезинсекторов
+        cur.execute("SELECT id, name FROM disinsectors")
+        disinsectors = cur.fetchall()
+
         if request.method == 'POST':
             disinsector_filter = request.form.get('disinsector')
 
             query = '''
-                        SELECT d.id, d.name, 
-                               COUNT(o.id) AS ordersTotal,
-                               SUM(CASE WHEN o.order_status = 'Выполнено' THEN 1 ELSE 0 END) AS ordersDone,
-                               SUM(CASE WHEN o.order_status = 'В процессе' THEN 1 ELSE 0 END) AS ordersWait,
-                               o.order_id, o.order_status, o.order_date, o.estimated_price, o.final_price, 
-                               o.poison_type, o.name, o.insect_type, o.insect_quantity, 
-                               o.phone, o.address, o.client_area
-                        FROM disinsectors d
-                        LEFT JOIN orders o ON d.id = o.disinsector_id
-                    '''
+                SELECT d.id, d.name,
+                       COUNT(o.id) AS ordersTotal,
+                       SUM(CASE WHEN o.order_status = 'Выполнено' THEN 1 ELSE 0 END) AS ordersDone,
+                       SUM(CASE WHEN o.order_status = 'В процессе' THEN 1 ELSE 0 END) AS ordersWait,
+                       o.order_id, o.order_status, o.order_date, o.estimated_price, o.final_price,
+                       o.poison_type, c.name, o.insect_type, o.insect_quantity,
+                       c.phone, c.address, o.client_area
+                FROM disinsectors d
+                LEFT JOIN orders o ON d.id = o.disinsector_id
+                LEFT JOIN clients c ON o.client_id = c.id
+            '''
 
+            params = []
             if disinsector_filter and disinsector_filter != 'Все':
                 query += " WHERE d.id = ?"
-                cur.execute(query, (disinsector_filter,))
-            else:
-                cur.execute(query)
+                params.append(disinsector_filter)
 
+            query += " GROUP BY d.id, o.order_id"
+
+            cur.execute(query, params)
             results = cur.fetchall()
 
             if 'export_json' in request.form:
                 return export_detailed_json(results)
 
-        cur.execute("SELECT id, name FROM disinsectors")
-        disinsectors = cur.fetchall()
-
         conn.close()
         return render_template('admin_reports.html', disinsectors=disinsectors)
     else:
-        return redirect(url_for('login'))
-
+        return redirect(url_for('admin_login'))
 
 # Экспорт детализированных данных в JSON
 def export_detailed_json(data):
@@ -388,7 +337,9 @@ def export_detailed_json(data):
     disinsector_info = {}
 
     for row in data:
-        user_id, user_name, orders_total, orders_done, orders_wait, order_id, order_status, order_date, estimated_price, final_price, poison_type, client_name, insect_type, insect_quantity, phone, address, client_area = row
+        (user_id, user_name, orders_total, orders_done, orders_wait, order_id, order_status,
+         order_date, estimated_price, final_price, poison_type, client_name, insect_type,
+         insect_quantity, phone, address, client_area) = row
 
         # Если мы перешли к новому дезинсектору, добавляем предыдущего в список
         if current_disinsector != user_id:
@@ -417,7 +368,7 @@ def export_detailed_json(data):
             "insectType": insect_type,
             "insectQuant": insect_quantity,
             "clientPhone": phone,
-            "clientAdress": address,
+            "clientAddress": address,
             "clientArea": client_area
         })
 
@@ -425,19 +376,17 @@ def export_detailed_json(data):
     if current_disinsector is not None:
         data_list.append(disinsector_info)
 
-    # Возвращаем JSON с ensure_ascii=False, чтобы поддерживать русский текст
-    return jsonify(data_list, ensure_ascii=False)
-
+    # Возвращаем JSON
+    response = make_response(jsonify(data_list))
+    response.headers['Content-Type'] = 'application/json; charset=utf-8'
+    return response
 
 # Выход из системы
 @app.route('/logout')
 def logout():
-    session.pop('user_id', None)
-    session.pop('role', None)
+    session.clear()
     return redirect(url_for('index'))
-
 
 # Основной запуск приложения
 if __name__ == '__main__':
     app.run(debug=True)
-

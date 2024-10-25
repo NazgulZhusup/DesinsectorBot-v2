@@ -1,0 +1,23 @@
+{% extends "base.html" %}
+
+{% block title %}Вход для дезинсектора{% endblock %}
+
+{% block content %}
+<div class="container">
+    <h1>Вход для дезинсектора</h1>
+    <form method="POST" action="{{ url_for('disinsector_login') }}">
+        <label for="token">Токен:</label>
+        <input type="text" name="token" id="token" required>
+        <button type="submit">Войти</button>
+    </form>
+    {% with messages = get_flashed_messages() %}
+        {% if messages %}
+            <div class="message">
+                {% for message in messages %}
+                    <p>{{ message }}</p>
+                {% endfor %}
+            </div>
+        {% endif %}
+    {% endwith %}
+</div>
+{% endblock %}

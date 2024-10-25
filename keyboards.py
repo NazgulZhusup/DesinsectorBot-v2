@@ -10,7 +10,7 @@ inl_kb_dis_greetings = InlineKeyboardMarkup(inline_keyboard=[
 ])
 
 # Клавиатура выбора объекта
-inl_kb_object = InlineKeyboardMarkup(inline_keyboard=[
+inl_kb_object_type = InlineKeyboardMarkup(inline_keyboard=[
     [InlineKeyboardButton(text="Дом", callback_data="object_home")],
     [InlineKeyboardButton(text="Квартира", callback_data="object_apartment")],
     [InlineKeyboardButton(text="Офис", callback_data="object_office")]
