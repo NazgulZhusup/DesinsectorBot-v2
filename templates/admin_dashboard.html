@@ -65,16 +65,18 @@
 
     {% if session.get('role') == 'admin' %}
     <h3>Отчеты по заявкам</h3>
-    <form method="POST">
-        <label for="disinsector">Фильтр по дезинсектору:</label>
-        <select name="disinsector">
-            <option value="Все">Все</option>
-            {% for disinsector in disinsectors %}
-                <option value="{{ disinsector[0] }}">{{ disinsector[1] }}</option>
-            {% endfor %}
-        </select>
-        <input type="submit" name="export_json" value="Экспортировать в JSON">
-    </form>
+    <form method="POST" action="{{ url_for('admin_reports') }}">
+    <label for="disinsector">Фильтр по дезинсектору:</label>
+    <select name="disinsector" id="disinsector">
+        <option value="Все">Все</option>
+        {% for disinsector in disinsectors %}
+            <option value="{{ disinsector[0] }}">{{ disinsector[1] }}</option>
+        {% endfor %}
+    </select>
+    <button type="submit" name="filter">Применить фильтр</button>
+    <button type="submit" name="export_json">Экспортировать в JSON</button>
+</form>
+
     <br><br>
     {% endif %}
 

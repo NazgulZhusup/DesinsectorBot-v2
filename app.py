@@ -263,43 +263,32 @@ def export_json():
         conn = sqlite3.connect('disinsect_data.db')
         cur = conn.cursor()
 
-        # Извлекаем все данные из таблицы orders
+        # Объединение таблиц orders и clients по client_id
         cur.execute('''
-            SELECT order_id, client_id, disinsector_id, name, object, insect_quantity, disinsect_experience,
-                   phone, address, order_status, order_date, estimated_price, final_price, poison_type, insect_type, client_area
-            FROM orders
+            SELECT c.name, c.phone, c.address, o.order_status, o.order_id, o.estimated_price, o.final_price, o.poison_type
+            FROM orders o
+            JOIN clients c ON o.client_id = c.id
         ''')
         orders = cur.fetchall()
-
-        # Закрываем соединение с базой данных
         conn.close()
 
-        # Преобразуем полученные данные в формат JSON
         orders_list = []
         for order in orders:
             orders_list.append({
-                'order_id': order[0],
-                'client_id': order[1],
-                'disinsector_id': order[2],
-                'name': order[3],
-                'object': order[4],
-                'insect_quantity': order[5],
-                'disinsect_experience': order[6],
-                'phone': order[7],
-                'address': order[8],
-                'order_status': order[9],
-                'order_date': order[10],
-                'estimated_price': order[11],
-                'final_price': order[12],
-                'poison_type': order[13],
-                'insect_type': order[14],
-                'client_area': order[15]
+                'client_name': order[0],
+                'phone': order[1],
+                'address': order[2],
+                'status': order[3],
+                'order_id': order[4],
+                'estimated_price': order[5],
+                'final_price': order[6],
+                'poison_type': order[7]
             })
 
-        # Возвращаем данные в формате JSON
         return jsonify(orders_list)
     else:
         return redirect(url_for('admin_login'))
+
 
 
 # Маршрут для отчетов администратора
@@ -309,47 +298,45 @@ def admin_reports():
         conn = sqlite3.connect('disinsect_data.db')
         cur = conn.cursor()
 
-        disinsectors = []
-        data_list = []
-
-        # Получаем список дезинсекторов
+        # Получаем список всех дезинсекторов
         cur.execute("SELECT id, name FROM disinsectors")
         disinsectors = cur.fetchall()
 
-        if request.method == 'POST':
-            disinsector_filter = request.form.get('disinsector')
+        disinsector_filter = request.form.get('disinsector') if request.method == 'POST' else None
 
-            query = '''
-                SELECT d.id, d.name,
-                       COUNT(o.id) AS ordersTotal,
-                       SUM(CASE WHEN o.order_status = 'Выполнено' THEN 1 ELSE 0 END) AS ordersDone,
-                       SUM(CASE WHEN o.order_status = 'В процессе' THEN 1 ELSE 0 END) AS ordersWait,
-                       o.order_id, o.order_status, o.order_date, o.estimated_price, o.final_price,
-                       o.poison_type, c.name, o.insect_type, o.insect_quantity,
-                       c.phone, c.address, o.client_area
-                FROM disinsectors d
-                LEFT JOIN orders o ON d.id = o.disinsector_id
-                LEFT JOIN clients c ON o.client_id = c.id
-            '''
+        query = '''
+            SELECT d.id, d.name,
+                   COUNT(o.id) AS ordersTotal,
+                   SUM(CASE WHEN o.order_status = 'Выполнено' THEN 1 ELSE 0 END) AS ordersDone,
+                   SUM(CASE WHEN o.order_status = 'В процессе' THEN 1 ELSE 0 END) AS ordersWait,
+                   o.order_id, o.order_status, o.order_date, o.estimated_price, o.final_price,
+                   o.poison_type, c.name, o.insect_type, o.insect_quantity,
+                   c.phone, c.address, o.client_area
+            FROM disinsectors d
+            LEFT JOIN orders o ON d.id = o.disinsector_id
+            LEFT JOIN clients c ON o.client_id = c.id
+        '''
 
-            params = []
-            if disinsector_filter and disinsector_filter != 'Все':
-                query += " WHERE d.id = ?"
-                params.append(disinsector_filter)
+        params = []
+        if disinsector_filter and disinsector_filter != 'Все':
+            query += " WHERE d.id = ?"
+            params.append(disinsector_filter)
 
-            query += " GROUP BY d.id, o.order_id"
+        query += " GROUP BY d.id, o.order_id"
 
-            cur.execute(query, params)
-            results = cur.fetchall()
+        cur.execute(query, params)
+        results = cur.fetchall()
 
-            if 'export_json' in request.form:
-                return export_detailed_json(results)
+        if 'export_json' in request.form:
+            return export_detailed_json(results)
 
         conn.close()
-        return render_template('admin_reports.html', disinsectors=disinsectors)
+        return render_template('admin_reports.html', disinsectors=disinsectors, results=results)
     else:
         return redirect(url_for('admin_login'))
 
+
+# Экспорт детализированных данных в JSON
 # Экспорт детализированных данных в JSON
 def export_detailed_json(data):
     data_list = []
@@ -400,6 +387,7 @@ def export_detailed_json(data):
     response = make_response(jsonify(data_list))
     response.headers['Content-Type'] = 'application/json; charset=utf-8'
     return response
+
 
 # Выход из системы
 @app.route('/logout')

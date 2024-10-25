@@ -1,0 +1,42 @@
+{% extends "base.html" %}
+
+{% block title %}Отчеты по заявкам{% endblock %}
+
+{% block content %}
+<div class="container">
+    <h1>Отчеты по заявкам</h1>
+    <table class="styled-table">
+        <thead>
+            <tr>
+                <th>Дезинсектор</th>
+                <th>Всего заявок</th>
+                <th>Выполнено</th>
+                <th>В процессе</th>
+                <th>Детали заказа</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for result in results %}
+            <tr>
+                <td>{{ result[1] }}</td> <!-- Имя дезинсектора -->
+                <td>{{ result[2] or 0 }}</td> <!-- Всего заявок -->
+                <td>{{ result[3] or 0 }}</td> <!-- Выполнено -->
+                <td>{{ result[4] or 0 }}</td> <!-- В процессе -->
+                <td>
+                    {% if result[5] %}
+                        {% for order in result[5] %}
+                            <div class="order-details">
+                                <strong>Заявка ID:</strong> {{ order['orderId'] or 'N/A' }},
+                                <strong>Статус:</strong> {{ order['orderStatus'] or 'N/A' }}
+                            </div>
+                        {% endfor %}
+                    {% else %}
+                        <span class="empty">Нет заявок</span>
+                    {% endif %}
+                </td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</div>
+{% endblock %}
