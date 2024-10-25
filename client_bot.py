@@ -51,7 +51,7 @@ async def process_name(message: types.Message, state: FSMContext):
         f"{message.text}, ответьте, пожалуйста, на несколько вопросов, чтобы мы могли просчитать стоимость дезинсекции.",
         reply_markup=kb.inl_kb_greetings
     )
-    await state.set_state(ClientForm.object)
+    await state.set_state(ClientForm.name)
 
 
 @dp.callback_query(F.data == 'start')
@@ -64,7 +64,7 @@ async def process_start(callback: types.CallbackQuery, state: FSMContext):
     await state.set_state(ClientForm.object_type)
 
 
-@dp.callback_query(F.data.startswith('object_'))
+@dp.callback_query(F.data.startswith('object_type'))
 async def process_object(callback: types.CallbackQuery, state: FSMContext):
     object_selected = callback.data.split('_')[1]
     await state.update_data(object_type=object_selected)
