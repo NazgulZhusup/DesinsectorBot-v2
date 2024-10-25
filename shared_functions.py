@@ -16,7 +16,6 @@ def get_disinsector_token(disinsector_id):
         if conn:
             conn.close()
 
-
 def get_next_disinsector():
     try:
         with sqlite3.connect('disinsect_data.db') as conn:

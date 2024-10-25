@@ -1,13 +1,12 @@
 import asyncio
 from aiogram import Bot, Dispatcher, types, F
-from aiogram.filters import CommandStart
+from aiogram.filters import CommandStart, StateFilter
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.fsm.storage.memory import MemoryStorage
 import logging
 import keyboards as kb
 from db import get_disinsector_by_token, update_order, get_all_disinsector_tokens
-from shared_functions import get_disinsector_token
 
 logging.basicConfig(
     level=logging.INFO,
@@ -24,7 +23,6 @@ class DisinsectorForm(StatesGroup):
     insect_type = State()
     client_area = State()
     estimated_price = State()
-    order_id = State()
 
 
 async def start_disinsector_bot(token):
@@ -53,7 +51,7 @@ async def start_disinsector_bot(token):
             logging.error(f"Error during the start command: {e}")
 
     # Обработчик уведомления о новой заявке
-    @dp.callback_query(lambda c: c.data.startswith('accept_order_'))
+    @dp.callback_query(F.data.startswith('accept_order_'))
     async def process_accept_order(callback: types.CallbackQuery, state: FSMContext):
         order_id = callback.data.split('_')[-1]  # Извлекаем order_id
         await state.update_data(order_id=order_id)
@@ -61,7 +59,7 @@ async def start_disinsector_bot(token):
         await callback.message.answer("Какой химикат будет использоваться?", reply_markup=kb.inl_kb_poison_type)
         await state.set_state(DisinsectorForm.poison_type)
 
-    @dp.callback_query(lambda c: c.data.startswith('decline_order_'))
+    @dp.callback_query(F.data.startswith('decline_order_'))
     async def process_decline_order(callback: types.CallbackQuery, state: FSMContext):
         order_id = callback.data.split('_')[-1]  # Извлекаем order_id
         # Обновляем статус заявки в базе данных
@@ -70,25 +68,25 @@ async def start_disinsector_bot(token):
         await state.clear()
 
     # Обработчик выбора химиката
-    @dp.callback_query(F.data.startswith('poison_'))
+    @dp.callback_query(F.data.startswith('poison_'), StateFilter(DisinsectorForm.poison_type))
     async def process_poison_selection(callback: types.CallbackQuery, state: FSMContext):
-        poison_type = callback.data.split('_')[1]
+        poison_type = callback.data.split('_', 1)[1]
         await state.update_data(poison_type=poison_type)
         await callback.answer()
         await callback.message.answer("Какой вид насекомого?", reply_markup=kb.inl_kb_insect_type)
         await state.set_state(DisinsectorForm.insect_type)
 
     # Обработчик выбора насекомого
-    @dp.callback_query(F.data.startswith('insect_'))
+    @dp.callback_query(F.data.startswith('insect_'), StateFilter(DisinsectorForm.insect_type))
     async def process_insect_selection(callback: types.CallbackQuery, state: FSMContext):
-        insect_type = callback.data.split('_')[1]
+        insect_type = callback.data.split('_', 1)[1]
         await state.update_data(insect_type=insect_type)
         await callback.answer()
         await callback.message.answer("Какова площадь помещения? Введите числовое значение.")
         await state.set_state(DisinsectorForm.client_area)
 
     # Обработчик ввода площади помещения
-    @dp.message(DisinsectorForm.client_area)
+    @dp.message(StateFilter(DisinsectorForm.client_area))
     async def process_client_area(message: types.Message, state: FSMContext):
         try:
             client_area = float(message.text)
@@ -98,7 +96,7 @@ async def start_disinsector_bot(token):
         except ValueError:
             await message.answer("Пожалуйста, введите числовое значение.")
 
-    @dp.message(DisinsectorForm.estimated_price)
+    @dp.message(StateFilter(DisinsectorForm.estimated_price))
     async def process_estimated_price(message: types.Message, state: FSMContext):
         try:
             estimated_price = float(message.text)
@@ -150,13 +148,11 @@ async def start_disinsector_bot(token):
 
 async def main():
     try:
-        tasks = []
         tokens = get_all_disinsector_tokens()
         if not tokens:
             logging.error("Нет токенов дезинсекторов для запуска ботов.")
             return
-        for token in tokens:
-            tasks.append(start_disinsector_bot(token))
+        tasks = [start_disinsector_bot(token) for token in tokens]
         await asyncio.gather(*tasks)
     except Exception as e:
         logging.error(f"Ошибка в основной функции: {e}")

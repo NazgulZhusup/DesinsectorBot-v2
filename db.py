@@ -215,6 +215,7 @@ def get_all_disinsector_tokens():
             conn.close()
 
 
+
 def get_disinsector_by_token(token):
     try:
         conn = sqlite3.connect('disinsect_data.db')
@@ -239,6 +240,7 @@ def update_disinsector_user_id(disinsector_id, user_id):
             logging.info(f"user_id для дезинсектора {disinsector_id} обновлен на {user_id}")
     except sqlite3.Error as e:
         logging.error(f"Ошибка при обновлении user_id дезинсектора {disinsector_id}: {e}")
+
 
 
 init_db()
